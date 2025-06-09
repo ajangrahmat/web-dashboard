@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IoT Temperature Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mqtt/dist/mqtt.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: #f8fafc;
+        }
+        
+        .dashboard-card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+            border: 1px solid rgba(0, 0, 0, 0.05);
+            transition: all 0.2s ease-in-out;
+        }
+        
+        .dashboard-card:hover {
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+        }
+        
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-connected {
+            background-color: #10b981;
+        }
+        
+        .status-disconnected {
+            background-color: #ef4444;
+            animation: none;
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(0.95); opacity: 0.9; }
+            50% { transform: scale(1.05); opacity: 0.6; }
+            100% { transform: scale(0.95); opacity: 0.9; }
+        }
+        
+        .temperature-display {
+            font-size: 4.5rem;
+            font-weight: 300;
+            line-height: 1;
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .metric-card {
+            border-radius: 12px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+        }
+        
+        .metric-value {
+            font-size: 1.875rem;
+            font-weight: 600;
+        }
+        
+        .metric-label {
+            font-size: 0.875rem;
+            color: #64748b;
+            font-weight: 500;
+            margin-top: 0.25rem;
+        }
+        
+        .section-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #1e293b;
+        }
+        
+        .device-info-card {
+            background: #f8fafc;
+            border-radius: 12px;
+            transition: all 0.2s ease;
+        }
+        
+        .device-info-card:hover {
+            background: #f1f5f9;
+            transform: translateY(-3px);
+        }
+        
+        .connection-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        
+        .connected {
+            background-color: rgba(16, 185, 129, 0.1);
+            color: #10b981;
+        }
+        
+        .disconnected {
+            background-color: rgba(239, 68, 68, 0.1);
+            color: #ef4444;
+        }
+        
+        /* Custom gauge styles */
+        #tempGauge {
+            max-height: 280px;
+            max-width: 280px;
+            margin: 0 auto;
+        }
+        
+        /* Dark mode support */
+        @media (prefers-color-scheme: dark) {
+            body {
+                background-color: #0f172a;
+                color: #f8fafc;
+            }
+            
+            .dashboard-card {
+                background: #1e293b;
+                border-color: #334155;
+            }
+            
+            .metric-card::before {
+                background: linear-gradient(90deg, #60a5fa, #a78bfa);
+            }
+            
+            .device-info-card {
+                background: #1e293b;
+            }
+            
+            .device-info-card:hover {
+                background: #334155;
+            }
+            
+            .metric-label {
+                color: #94a3b8;
+            }
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gray-50 text-gray-900">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Header -->
+        <div class="dashboard-card p-6 mb-8">
+            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div>
+                    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">IoT Temperature Monitor</h1>
+                    <p class="text-gray-500 dark:text-gray-400">Real-time sensor data visualization</p>
+                </div>
+                <div class="flex items-center">
+                    <span id="connectionStatus" class="status-indicator status-connected"></span>
+                    <span id="connectionBadge" class="connection-badge connected">Connecting</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Dashboard -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            <!-- Temperature Gauge -->
+            <div class="lg:col-span-2 dashboard-card p-8">
+                <div class="flex flex-col items-center justify-center gap-4">
+                    <div class="text-center mb-4">
+                        <div id="mainTemp" class="temperature-display">--°</div>
+                        <p class="text-gray-500 dark:text-gray-400 mt-2">Current Temperature</p>
+                    </div>
+                    <div class="w-full max-w-xs">
+                        <canvas id="tempGauge"></canvas>
+                    </div>
+                    <div class="flex justify-center gap-4 mt-4">
+                        <div class="text-center">
+                            <div class="text-sm text-gray-500 dark:text-gray-400">Last Update</div>
+                            <div id="lastUpdateTime" class="font-medium">Never</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stats Cards -->
+            <div class="grid grid-cols-1 gap-6">
+                <!-- Current Temp -->
+                <div class="dashboard-card metric-card p-6">
+                    <div class="flex items-center gap-4">
+                        <div class="bg-blue-100 dark:bg-blue-900/30 p-3 rounded-xl">
+                            <i class="fas fa-thermometer-half text-blue-500 dark:text-blue-400 text-xl"></i>
+                        </div>
+                        <div>
+                            <div class="metric-label">Current Temperature</div>
+                            <div id="currentValue" class="metric-value text-gray-900 dark:text-white">--°C</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Today's High -->
+                <div class="dashboard-card metric-card p-6">
+                    <div class="flex items-center gap-4">
+                        <div class="bg-red-100 dark:bg-red-900/30 p-3 rounded-xl">
+                            <i class="fas fa-temperature-high text-red-500 dark:text-red-400 text-xl"></i>
+                        </div>
+                        <div>
+                            <div class="metric-label">Today's High</div>
+                            <div id="maxValue" class="metric-value text-red-500">--°C</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Today's Low -->
+                <div class="dashboard-card metric-card p-6">
+                    <div class="flex items-center gap-4">
+                        <div class="bg-blue-100 dark:bg-blue-900/30 p-3 rounded-xl">
+                            <i class="fas fa-temperature-low text-blue-500 dark:text-blue-400 text-xl"></i>
+                        </div>
+                        <div>
+                            <div class="metric-label">Today's Low</div>
+                            <div id="minValue" class="metric-value text-blue-500">--°C</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Device Information -->
+        <div class="dashboard-card p-6">
+            <h2 class="section-title mb-6 flex items-center gap-2">
+                <i class="fas fa-microchip text-indigo-500"></i>
+                Device Information
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- Device Card -->
+                <div class="device-info-card p-5">
+                    <div class="flex items-center gap-4">
+                        <div class="bg-indigo-100 dark:bg-indigo-900/30 p-3 rounded-xl">
+                            <i class="fas fa-microchip text-indigo-500 dark:text-indigo-400 text-xl"></i>
+                        </div>
+                        <div>
+                            <div class="font-medium text-gray-900 dark:text-white">Device</div>
+                            <div class="text-sm text-gray-500 dark:text-gray-400">ESP32-S3</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Broker Card -->
+                <div class="device-info-card p-5">
+                    <div class="flex items-center gap-4">
+                        <div class="bg-green-100 dark:bg-green-900/30 p-3 rounded-xl">
+                            <i class="fas fa-server text-green-500 dark:text-green-400 text-xl"></i>
+                        </div>
+                        <div>
+                            <div class="font-medium text-gray-900 dark:text-white">MQTT Broker</div>
+                            <div class="text-sm text-gray-500 dark:text-gray-400">broker.emqx.io</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Topic Card -->
+                <div class="device-info-card p-5">
+                    <div class="flex items-center gap-4">
+                        <div class="bg-purple-100 dark:bg-purple-900/30 p-3 rounded-xl">
+                            <i class="fas fa-tags text-purple-500 dark:text-purple-400 text-xl"></i>
+                        </div>
+                        <div>
+                            <div class="font-medium text-gray-900 dark:text-white">Topic</div>
+                            <div class="text-sm text-gray-500 dark:text-gray-400">hello/09021021/kirimdata</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // MQTT Configuration
+        const brokerUrl = 'wss://broker.emqx.io:8084/mqtt';
+        const topic = 'hello/09021021/kirimdata';
+        const clientId = 'dashboard_' + Math.random().toString(16).substr(2, 8);
+        
+        // Temperature tracking
+        let currentTemperature = 0;
+        let maxTemperature = -Infinity;
+        let minTemperature = Infinity;
+        
+        // Initialize Chart.js Gauge
+        const ctx = document.getElementById('tempGauge').getContext('2d');
+        const gaugeChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                datasets: [{
+                    data: [0, 100],
+                    backgroundColor: ['#3b82f6', '#e2e8f0'],
+                    borderWidth: 0,
+                    cutout: '80%',
+                    circumference: 270,
+                    rotation: 225
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { enabled: false }
+                },
+                animation: {
+                    animateRotate: true,
+                    duration: 1000
+                }
+            },
+            plugins: [{
+                id: 'gaugeText',
+                beforeDraw: function(chart) {
+                    const { ctx, chartArea: { width, height } } = chart;
+                    const centerX = width / 2;
+                    const centerY = height / 2;
+                    
+                    // Draw temperature value
+                    ctx.save();
+                    ctx.font = '600 40px Inter, sans-serif';
+                    ctx.fillStyle = '#3b82f6';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(currentTemperature.toFixed(1) + '°C', centerX, centerY - 20);
+                    
+                    // Draw status
+                    ctx.font = '500 12px Inter, sans-serif';
+                    ctx.fillStyle = '#64748b';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('REAL-TIME MONITORING', centerX, centerY + 20);
+                    
+                    ctx.restore();
+                }
+            }]
+        });
+
+        // MQTT Client Setup
+        function connectMQTT() {
+            const options = {
+                clientId: clientId,
+                clean: true,
+                connectTimeout: 4000,
+                reconnectPeriod: 1000,
+            };
+
+            try {
+                const client = mqtt.connect(brokerUrl, options);
+
+                client.on('connect', () => {
+                    console.log('Connected to MQTT broker');
+                    updateConnectionStatus(true);
+                    
+                    client.subscribe(topic, (err) => {
+                        if (!err) {
+                            console.log(`Subscribed to topic: ${topic}`);
+                        }
+                    });
+                });
+
+                client.on('message', (topic, message) => {
+                    const temp = parseFloat(message.toString());
+                    if (!isNaN(temp)) {
+                        updateTemperature(temp);
+                    }
+                });
+
+                client.on('error', (error) => {
+                    console.error('MQTT Error:', error);
+                    updateConnectionStatus(false);
+                });
+
+                client.on('close', () => {
+                    console.log('MQTT connection closed');
+                    updateConnectionStatus(false);
+                });
+
+                client.on('offline', () => {
+                    console.log('MQTT offline');
+                    updateConnectionStatus(false);
+                });
+
+                return client;
+            } catch (error) {
+                console.error('Connection error:', error);
+                updateConnectionStatus(false);
+                return null;
+            }
+        }
+
+        // Update connection status UI
+        function updateConnectionStatus(connected) {
+            const statusElement = document.getElementById('connectionStatus');
+            const badgeElement = document.getElementById('connectionBadge');
+            
+            if (connected) {
+                statusElement.className = 'status-indicator status-connected';
+                badgeElement.className = 'connection-badge connected';
+                badgeElement.textContent = 'Connected';
+            } else {
+                statusElement.className = 'status-indicator status-disconnected';
+                badgeElement.className = 'connection-badge disconnected';
+                badgeElement.textContent = 'Disconnected';
+            }
+        }
+
+        // Update temperature data and UI
+        function updateTemperature(temp) {
+            currentTemperature = temp;
+            
+            // Update max and min temp records
+            maxTemperature = Math.max(maxTemperature, temp);
+            if (minTemperature === Infinity) {
+                minTemperature = temp;
+            } else {
+                minTemperature = Math.min(minTemperature, temp);
+            }
+            
+            // Update UI elements
+            document.getElementById('mainTemp').textContent = temp.toFixed(1) + '°';
+            document.getElementById('currentValue').textContent = temp.toFixed(1) + '°C';
+            document.getElementById('maxValue').textContent = maxTemperature.toFixed(1) + '°C';
+            document.getElementById('minValue').textContent = minTemperature.toFixed(1) + '°C';
+            
+            // Format last update time
+            const now = new Date();
+            document.getElementById('lastUpdateTime').textContent = 
+                now.toLocaleTimeString('en-US', { 
+                    hour: '2-digit', 
+                    minute: '2-digit', 
+                    second: '2-digit' 
+                }) + ' | ' +
+                now.toLocaleDateString('en-US', { 
+                    month: 'short', 
+                    day: 'numeric' 
+                });
+            
+            // Update gauge (normalize temp to 0-100% for visualization)
+            const normalizedTemp = Math.max(0, Math.min(100, (temp / 50) * 100));
+            gaugeChart.data.datasets[0].data = [normalizedTemp, 100 - normalizedTemp];
+            gaugeChart.update();
+            
+            // Special effects for extreme temperatures
+            if (temp > 40) {
+                document.getElementById('mainTemp').style.background = 'linear-gradient(135deg, #ef4444, #f97316)';
+                document.getElementById('mainTemp').style.webkitBackgroundClip = 'text';
+            } else if (temp < 10) {
+                document.getElementById('mainTemp').style.background = 'linear-gradient(135deg, #3b82f6, #06b6d4)';
+                document.getElementById('mainTemp').style.webkitBackgroundClip = 'text';
+            } else {
+                document.getElementById('mainTemp').style.background = 'linear-gradient(135deg, #3b82f6, #8b5cf6)';
+                document.getElementById('mainTemp').style.webkitBackgroundClip = 'text';
+            }
+        }
+
+        // Initialize MQTT connection
+        const client = connectMQTT();
+
+        // For demo purposes (remove when using real MQTT)
+        // Uncomment this section to see the dashboard working without MQTT
+        /*
+        let demoMode = true;
+        if (demoMode) {
+            updateConnectionStatus(true);
+            
+            // Simulate random temperature changes
+            let baseTemp = 22;
+            setInterval(() => {
+                const randomChange = (Math.random() - 0.5) * 4;
+                baseTemp += randomChange;
+                baseTemp = Math.max(-5, Math.min(50, baseTemp));
+                updateTemperature(baseTemp);
+            }, 2000);
+        }
+        */
+    </script>
+</body>
+</html>
